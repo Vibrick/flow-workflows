@@ -84,11 +84,11 @@ jobs:
             git diff --stat "${BASE_COMMIT}..HEAD"
             echo ""
             echo "===== Sample diff (truncated) ====="
-            git diff "${BASE_COMMIT}..HEAD" | head -c 4000 || true
+            git diff "${BASE_COMMIT}..HEAD" | head -c 30000 || true
           } > /tmp/source_changes.txt
 
-          # AI 토큰 한도 고려해 길이 제한 (~6KB)
-          head -c 6000 /tmp/source_changes.txt > /tmp/ai_input.txt
+          # AI 토큰 한도 — gpt-4o-mini는 128K context (~500KB). 50KB는 안전선.
+          head -c 50000 /tmp/source_changes.txt > /tmp/ai_input.txt
           echo "──── AI 입력 미리보기 ────"
           cat /tmp/ai_input.txt
           echo "──────────────────────────"
