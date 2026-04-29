@@ -281,7 +281,7 @@ jobs:
           python3 - <<'PY'
           import json, os
           p = 'version.json'
-          d = json.load(open(p, encoding='utf-8))
+          d = json.load(open(p, encoding='utf-8'))
           d['rev'] = int(os.environ['NEW_REV'])
           d['releaseDate'] = os.environ['DATE']
           d['releaseTime'] = os.environ['TIME']
@@ -299,7 +299,7 @@ jobs:
         if: steps.notes.outputs.source == 'file'
         run: |
           cat > RELEASE_NOTES.md <<'EOF'
-          ## 🎉 이번 리리�트 요약
+          ## 🎉 이번 릴리즈 요약
           -
           ## ✨ 추가된 기능
           -
