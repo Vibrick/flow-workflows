@@ -35,6 +35,14 @@ jobs:
 
       # ─────────────────────────────────────────────
       # NEW: source repo의 git log + diff를 모아 AI 입력 준비
+      #
+      # 비교 기준(BASE) 결정 우선순위:
+      #   1) source 레포 자신의 rev-* 태그 중 최신 (이전 릴리즈 때 역방향으로 찍어둔 것)
+      #   2) 직전 PWA release 날짜 이전 마지막 commit (1번이 없는 첫 도입 시 fallback)
+      #   3) 최근 30 커밋 시작점 (둘 다 없는 정말 첫 release일 때)
+      #
+      # 이전 버그: PWA 레포의 rev-N 태그를 source 레포에서 찾으려 해서 매번 못 찾고
+      #          최근 30 커밋을 통째로 입력 → 매 릴리즈가 같은 커밋들 반복 요약.
       # ─────────────────────────────────────────────
       - name: Collect source changes for AI
         if: inputs.source_repo != ''
@@ -45,9 +53,20 @@ jobs:
         shell: bash
         run: |
           set -e
-          # PWA 레포의 가장 최근 tag = 직전 release version (예: rev-12)
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          echo "PWA repo 직전 tag: ${LAST_TAG:-(없음, 첫 release로 간주)}"
+
+          # 직전 PWA release 시각 — source에 rev-* 태그가 아직 없을 때의 fallback
+          # version.json 에는 releaseDate(YYYY-MM-DD) + releaseTime(HH:MM, KST) 가 들어있음
+          PREV_TS=""
+          if [ -f version.json ]; then
+            PREV_DATE=$(python3 -c "import json,sys;d=json.load(open('version.json'));print(d.get('releaseDate','') or '')" 2>/dev/null || echo "")
+            PREV_TIME=$(python3 -c "import json,sys;d=json.load(open('version.json'));print(d.get('releaseTime','') or '')" 2>/dev/null || echo "")
+            if [ -n "$PREV_DATE" ] && [ -n "$PREV_TIME" ]; then
+              PREV_TS="${PREV_DATE} ${PREV_TIME}:59 +0900"   # KST
+            elif [ -n "$PREV_DATE" ]; then
+              PREV_TS="${PREV_DATE} 23:59:59 +0900"
+            fi
+          fi
+          echo "직전 PWA release 시각: ${PREV_TS:-(없음)}"
 
           # source 레포 clone
           rm -rf /tmp/source-checkout
@@ -55,19 +74,31 @@ jobs:
           cd /tmp/source-checkout
           git fetch --tags --quiet
 
-          # 비교 기준 commit 결정
-          # - source에 LAST_TAG가 있으면 그것부터 HEAD까지
-          # - 없으면 최근 30개 commit (단, commit이 30개 미만이면 첫 commit부터)
-          if [ -n "$LAST_TAG" ] && git rev-parse "$LAST_TAG" >/dev/null 2>&1; then
-            BASE_COMMIT=$(git rev-parse "$LAST_TAG")
-            echo "비교 기준: ${LAST_TAG} (${BASE_COMMIT})"
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          # 다음 step에서 source에 rev-N 태그를 찍을 SHA로 사용
+          echo "$HEAD_COMMIT" > /tmp/source_head.txt
+
+          # 1) source 레포 자신의 rev-* 태그 우선
+          SRC_LAST_TAG=$(git tag --list 'rev-*' --sort=-v:refname | head -n 1 || true)
+          if [ -n "$SRC_LAST_TAG" ]; then
+            BASE_COMMIT=$(git rev-parse "$SRC_LAST_TAG")
+            echo "비교 기준: source 레포 ${SRC_LAST_TAG} (${BASE_COMMIT})"
+          # 2) 직전 PWA release 시각 이전 마지막 commit (첫 도입용 fallback)
+          elif [ -n "$PREV_TS" ]; then
+            BASE_COMMIT=$(git log --before="${PREV_TS}" -1 --pretty=format:"%H" HEAD || echo "")
+            if [ -z "$BASE_COMMIT" ]; then
+              BASE_COMMIT=$(git rev-list --max-count=30 HEAD | tail -1)
+              echo "비교 기준: PREV_TS 이전 commit 없음 → 최근 30 커밋 시작점 ($BASE_COMMIT)"
+            else
+              echo "비교 기준: PREV_TS(${PREV_TS}) 이전 마지막 commit ($BASE_COMMIT)"
+            fi
+          # 3) 정말 첫 release
           else
             BASE_COMMIT=$(git rev-list --max-count=30 HEAD | tail -1)
             echo "비교 기준: 최근 30 커밋 시작점 ($BASE_COMMIT)"
           fi
 
           # BASE_COMMIT == HEAD 이면 변경 없음
-          HEAD_COMMIT=$(git rev-parse HEAD)
           if [ "$BASE_COMMIT" = "$HEAD_COMMIT" ]; then
             echo "변경된 commit이 없음. 빈 입력으로 진행."
             : > /tmp/ai_input.txt
@@ -100,14 +131,52 @@ jobs:
         with:
           model: openai/gpt-4o-mini
           system-prompt: |
-            너는 사용자 친화적인 한국어 릴리즈 노트 작성기다.
-            기술 용어 (refactor, API, deprecation 등)는 최대한 빼고 일상 단어로 풀어 써라.
-            짧고 명확하게. 한 항목당 한 줄. 추측이나 과장 금지.
-            아래 마크다운 형식으로만 출력해라. 변경 내용이 없는 섹션은 "- " 한 줄만 비워두기.
-            절대 인사말, 설명, 코드 펜스(```)를 추가하지 마라.
+            너는 일반 사용자(개발자 아님)에게 "이번 업데이트에서 뭐가 달라졌는지" 알려주는
+            한국어 릴리즈 노트 작성기다.
 
+            # 너의 독자
+            - 이 앱의 화면만 본다. 코드/파일/스크립트/배포/CI 같은 건 모른다.
+            - "어떻게 쓰는지"가 어떻게 바뀌었는지 궁금해한다.
+
+            # 입력에서 절대 본문에 등장시키지 말 것 (있어도 무시)
+            - 파일 이름이나 경로 자체:
+              CLAUDE.md, README.md, .vscode/, .clasp*, .gitignore, .claspignore,
+              scripts/, .github/workflows/, version.json, package.json,
+              RELEASE_NOTES.md, LICENSE
+            - 개발 도구·환경 자체:
+              VSCode, clasp, GitHub Actions, GitHub Models, workflow, CI,
+              lint, 빌드, 배포 스크립트, 푸시, 동기화 자동화 작업, deploy
+            - 코드 위생:
+              주석, 포맷, 들여쓰기, 변수명, 리팩터링, 함수 분리, 코드 정리
+            - 추상 시스템 용어:
+              API, refactor, deprecation, dependency, migration, hotfix
+
+            # 본문에 살릴 것
+            - 사용자가 화면에서 마주칠 수 있는 변화:
+              새 버튼 / 새 화면 / 새 메뉴 / 색·배치 변화 / 팝업·알림 동작 /
+              입력 방식 / 자동 계산·표시 항목 / 단축 동작 / 상태 표시
+            - 체감되는 속도·안정성 개선
+            - 사용자가 직접 겪었던 버그의 수정
+
+            # 추출 규칙
+            - 입력 commit log·diff 중 사용자 시점 변화 1~3개를 골라라.
+              나머지는 자른다. 모든 commit을 다 적으려 하지 마라.
+            - commit 메시지가 무미건조해도("Update index.html" 등)
+              diff에서 새 버튼·새 동작이 보이면 사용자 시점으로 풀어 써라.
+            - 사용자가 알아챌 변화가 정말로 하나도 없으면,
+              본문 4개 섹션은 "- " 한 줄만 두고 "📝 기타"에
+              "내부 정리 작업이 진행되었어요" 한 줄만 넣어라.
+            - 추측·과장 금지. 입력에 없는 기능을 만들어내지 마라.
+
+            # 표현 규칙
+            - 사용자 시점 한 줄. "~되었습니다"보단 "~했어요 / ~쓸 수 있어요 /
+              ~한눈에 보여요" 같은 부드러운 어미.
+            - "~기능이 구현되었습니다" 같은 개발자 어투 금지.
+              "~할 수 있게 됐어요" 처럼 사용자가 무엇을 할 수 있게 됐는지로.
+
+            # 출력 형식 (이것 외에 아무것도 출력하지 마라)
             ## 🎉 이번 릴리즈 요약
-            - (한 줄로 핵심 변화 요약. 사용자에게 가장 와닿는 표현으로)
+            - (한 줄로 핵심 변화. "이번 업데이트에서 ~ 할 수 있게 됐어요" 형태)
 
             ## ✨ 추가된 기능
             -
@@ -120,6 +189,9 @@ jobs:
 
             ## 📝 기타
             -
+
+            변경 내용이 없는 섹션은 "- " 한 줄만 비워두기.
+            절대 인사말, 설명, 코드 펜스(```)를 추가하지 마라.
           prompt-file: /tmp/ai_input.txt
 
       - name: Save AI output to RELEASE_NOTES.md
@@ -257,3 +329,40 @@ jobs:
           gh release create "rev-$NEW_REV" \
             --title "Rev. $NEW_REV - $TITLE" \
             --notes-file /tmp/release_notes.md
+
+      # ─────────────────────────────────────────────
+      # NEW: source 레포에도 rev-N 태그를 역방향 push
+      # 다음 릴리즈가 정확히 "지난 rev 이후 commit"만 AI 입력으로 보게 만드는 핵심 단계.
+      # ─────────────────────────────────────────────
+      - name: Tag source repo with rev-N
+        if: inputs.source_repo != ''
+        env:
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          PAT: ${{ secrets.RELEASE_PAT }}
+          NEW_REV: ${{ steps.bump.outputs.new_rev }}
+        shell: bash
+        run: |
+          set -e
+          if [ ! -d /tmp/source-checkout ]; then
+            echo "ℹ️  /tmp/source-checkout 없음 — Collect step이 스킵됐을 가능성. 태그도 스킵."
+            exit 0
+          fi
+          SRC_HEAD=$(cat /tmp/source_head.txt 2>/dev/null || echo "")
+          if [ -z "$SRC_HEAD" ]; then
+            echo "ℹ️  source HEAD SHA 없음. 태그 스킵."
+            exit 0
+          fi
+
+          cd /tmp/source-checkout
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 이미 같은 이름의 태그가 remote에 있으면 멱등 처리
+          if git ls-remote --tags origin "rev-$NEW_REV" | grep -q "refs/tags/rev-$NEW_REV"; then
+            echo "ℹ️  source 레포에 rev-$NEW_REV 가 이미 있음. 스킵."
+            exit 0
+          fi
+
+          git tag "rev-$NEW_REV" "$SRC_HEAD"
+          git push origin "rev-$NEW_REV"
+          echo "✅ source 레포에 rev-$NEW_REV 태그 push 완료 ($SRC_HEAD)"
