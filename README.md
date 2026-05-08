@@ -25,5 +25,5 @@ jobs:
 
 - taskflow
 - bodyflow
-- homeflow
+- coflow
 - assetflow
