@@ -14,6 +14,10 @@ Flow 시리즈 앱 레포에서 공유하는 재사용 가능한 GitHub Actions 
 없으면 app repo 변경만 사용한다.
 
 ```yaml
+permissions:
+  contents: write
+  models: read
+
 jobs:
   bump:
     uses: klausjg/flow-workflows/.github/workflows/bump-version.yml@main
