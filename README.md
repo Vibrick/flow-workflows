@@ -7,6 +7,10 @@ Flow 시리즈 앱 레포에서 공유하는 재사용 가능한 GitHub Actions 
 - `bump-version.yml` — version.json 갱신, 태그 생성, GitHub Release 발행
 - `notify-notion.yml` — Release 발행 시 Notion DB에 자동 기록
 
+## 운영 문서
+
+- `FLOW_APP_ONBOARDING.md` — 새 Flow 앱을 만들 때 Notion, GitHub, VSCode task, TaskFlow, release 자동화를 빠짐없이 붙이는 온보딩 런북
+
 ## 호출 방법
 
 각 앱 레포의 `.github/workflows/`에 얇은 래퍼를 두고 아래처럼 호출한다.
