@@ -144,6 +144,11 @@ Notion notify wrapper 필수 입력:
 - 필요 시 clasp push task
 - 필요 시 dev/test task
 
+런타임별 주의:
+
+- **GAS source repo**: clasp push task + `scripts/sync-claude.sh`(clasp push + git) + `release-auto.sh`.
+- **Expo app repo (GAS source와 분리된 경우)**: clasp가 없으므로 sync는 **git 전용**으로 만든다 — `scripts/sync-claude.sh`(git add/commit + **`git pull --rebase`** + push). pull --rebase가 필요한 이유: release 워크플로(`bump-version.yml`)가 **app repo 원격에 `version.json`을 commit**하므로, 안 하면 sync 때마다 `non-fast-forward`로 push가 막힌다. `.vscode/tasks.json`엔 🤖 Sync, 🎯 Release Auto(= sync + `eas build`), dev(`expo start`/`--web`), 빌드(`eas build`). release 의미 분리는 §7 Expo 참조.
+
 검토할 단축키:
 
 - 현재 일부 문서에는 `Cmd+Shift+R`, 사용자 운영 표현에는 `Cmd+Shift+B`가 섞여 있을 수 있다.
@@ -224,6 +229,15 @@ Notion notify wrapper 필수 입력:
 - 필요한 secrets
 - EAS Update 또는 EAS Build 적용 시점
 - native module 변경이면 OTA가 아니라 새 build 필요
+- **release 의미를 둘로 분리한다**:
+  - **배포(앱을 사용자에게)** = app repo의 🎯 Release Auto = `scripts/release-auto.sh`(sync `git push` → **`eas build --local`**). 로컬 빌드는 EAS 클라우드 quota를 쓰지 않는다 — 대신 **JDK 17 + Android SDK**(iOS는 Xcode)가 필요. 도구체인 없으면 스크립트가 안내 후 중단하며, 클라우드 빌드는 `EAS_REMOTE=1 bash scripts/release-auto.sh`. OTA(`eas update`)는 `expo-updates` 설치 후 추가(Phase 2.5+).
+  - **로컬 빌드 스크립트 표준**(estate/stock/body 공통): ① 빌드를 release-auto의 **맨 마지막**(version 기록 후)에 둬 빌드 실패가 기록을 막지 않게 함 ② `brew openjdk@17`는 keg-only라 PATH에 없을 수 있어 `JAVA_HOME`을 스크립트에서 직접 주입(`/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`), `ANDROID_HOME` 미설정 시 `~/Library/Android/sdk` 폴백 ③ `--output ~/Desktop/<flow>-<profile>-<MMDD>.apk`로 APK 저장 ④ 빌드 후 `scripts/share-apk.sh`로 같은 와이파이 폰에 LAN(URL+QR) 전송(카톡 APK 차단 우회) ⑤ gitignore된 `google-services.json`은 로컬 빌드 아카이브에 안 들어오니 `GOOGLE_SERVICES_JSON`에 로컬 절대경로 주입(또는 Known Pitfalls의 `.easignore`). **monorepo**면 빌드만 `( cd apps/mobile && eas build --local )`.
+  - **version 기록(version bump + GH Release + Notion + Backlog)** = source-driven. app repo의 `bump-version.yml`이 `source_repo`를 넘겨 AI 패치노트를 **소스 커밋 로그**에서 생성하므로, version 기록 release는 **source repo의 Release Auto**로 돌린다.
+  - 따라서 **app의 release-auto.sh는 `bump-version`을 트리거하지 않는다**(트리거하면 소스 기준 노트가 나옴).
+- app repo에도 `CLAUDE.md`를 둔다(§8) — 구조·작업 흐름·빌드/release 방식 기록. Expo 앱은 누락되기 쉽다.
+- `.claude-commit-msg`를 app repo `.gitignore`에 등록(GAS의 `.claspignore`는 불필요).
+- **dev 실행 셸 단축어**: app 경로가 길어 매번 `cd`가 번거로우므로 `~/.npm-global/bin`에 실행 스크립트 3종을 둔다 — `<flow>-start`(`cd <app경로> && exec npx expo start --port <고정포트> "$@"`), `<flow>-web`(`--web --port <고정포트>`), `<flow>-stop`(해당 포트 Metro kill, 비상용·평소엔 Ctrl-C). 이 폴더는 `.zshrc`에서 이미 PATH라 어느 폴더에서든 작동하고 **셸 프로파일 수정 없이 파일만 추가**하면 된다(자동화가 `.zshrc` 수정을 차단하면 alias 대신 이 방식). 이름은 경로가 아니라 flow 이름 기준(`bodyflow-app/apps/mobile` → `bodyflow-*`). `chmod +x` 필수.
+  - **앱별 고정 포트** — 여러 앱을 동시에 띄워 번갈아 확인할 수 있고, `-stop`이 자기 앱만 정확히 종료한다. 고정하지 않으면 둘째 앱이 자동으로 다른 포트(8082…)로 떠서 `-stop`이 못 잡는다. 현재 배정: estateflow `8081`, stockflow `8082`, bodyflow `8083`. **새 앱은 마지막 포트+1**(다음은 `8084`). start/web에 `--port <포트>`, stop은 `lsof -ti:<포트>`로 kill.
 
 ## 8. Local Workspace
 
@@ -259,6 +273,25 @@ Notion notify wrapper 필수 입력:
 - 어느 앱 온보딩에서 발견했는지
 - 재발 방지 체크 항목
 
+### 업데이트 로그
+
+- **2026-06-09 · EstateFlow (Expo app)**
+  - 발견: 이미 온보딩된 앱인데도 `estateflow-app`(Expo)에 §5 VSCode task와 §8 `CLAUDE.md`가 없었음. release는 source-driven인데 app에 Release Auto를 두려다, `bump-version.yml`의 `source_repo: klausjg/estateflow-source` 때문에 소스 기준 패치노트가 생성되는 구조를 확인.
+  - 추가한 단계: app repo에 git 전용 `scripts/sync-claude.sh` + `.vscode/tasks.json`(Sync / `expo start`·`--web` / `eas build`), `CLAUDE.md`, `.gitignore`에 `.claude-commit-msg` 등록.
+  - 재발 방지: §5 "런타임별 주의", §7 "Expo 앱"의 source-driven release·CLAUDE.md·gitignore 항목, Known Pitfalls에 반영.
+  - **운영 중 추가 발견(같은 날)**:
+    - sync push가 `non-fast-forward`로 거부 — release 워크플로가 app repo 원격에 `version.json`을 bump하기 때문. → `sync-claude.sh`에 `git pull --rebase origin main` 추가.
+    - 첫 sync의 `git add -A`가 `.env.save`(secret 백업)·`.pyc`·`.claude/`까지 커밋. push가 거부돼 **GitHub엔 미유출**, 커밋 amend로 제거 + `.gitignore` 보강(`.env.save`/`.claude/`/`__pycache__`/`*.pyc`).
+    - app Release Auto 결정 정정: 처음엔 "app엔 Release Auto 두지 않음"이었으나, 사용자가 app 배포 버튼을 원해 **`release-auto.sh` = sync + `eas build`(배포 전용)** 로 추가. version 기록(bump-version)은 그대로 source-driven 유지(app에서 트리거 안 함).
+    - EAS 무료 quota 소진으로 빌드 실패 → Expo 앱 빌드를 **`eas build --local`** 기본으로 전환(quota 안 씀, JDK17+Android SDK 필요, `EAS_REMOTE=1`이면 cloud). 적용: estateflow-app(release-auto = sync+로컬빌드, 📦/🍎 task). stockflow-app(app-first, full 파이프라인)은 **기존 sync+bump+Notion+Backlog 유지하고 `eas build --local`을 맨 마지막 단계(④, version 기록 후)로 추가** — 사용자 요청대로 빌드를 끝에 둬서 **빌드가 실패해도 version 기록은 이미 완료/보존**되게 함. 원칙: 로컬 빌드는 항상 **추가**, 기존 release-auto 기능은 제거 금지. 추가로 gitignore된 `google-services.json`이 `eas build --local` 아카이브에서 빠져 prebuild가 실패 → **`.easignore`** 로 포함시킴(비밀 `.env`/`firebase-service-account*.json`은 계속 제외). bodyflow-app(monorepo)도 동일하게 release-auto(루트) 끝에 빌드 추가하되 Expo 앱이 `apps/mobile`이라 **`( cd apps/mobile && eas build --local )`**. → 3개 Expo 앱(estate/stock/body) 모두 build-last 일관 적용.
+
+- **2026-06-10 · StockFlow / BodyFlow (Expo dev 셸 단축어)**
+  - 발견: Expo dev 서버 실행에 매번 긴 `~/Projects/.../app` 경로를 `cd` 해야 해 번거로움. 사용자가 `~/Projects`의 **모든 Expo 앱**에 동일 단축어를 요청.
+  - 추가한 단계: §7 Expo "dev 실행 셸 단축어" — `~/.npm-global/bin`에 `<flow>-start`/`-web`/`-stop` 3종(stockflow·estateflow·bodyflow 적용 완료). `.zshrc` alias가 자동화 환경에서 차단돼, PATH 폴더에 실행 스크립트를 두는 방식으로 회피.
+  - 부수 발견: 어느 앱이 Expo인지 CLAUDE.md 구조표로 판단하면 누락된다 — **bodyflow는 문서상 GAS PWA지만 실제 `bodyflow-app/apps/mobile`에 Expo 앱이 별도 존재**. 식별은 `find ~/Projects -name node_modules -prune -o -name package.json -exec grep -l '"expo"' {} \;`.
+  - 재발 방지: Known Pitfalls에 "Expo 앱 식별은 expo 의존성 스캔", "Expo 앱 dev 단축어 누락" 반영.
+  - 후속(같은 날): 여러 앱 동시 실행·번갈아 확인 위해 **앱별 고정 포트** 지정 — estateflow 8081 / stockflow 8082 / bodyflow 8083, 새 앱 +1. start/web에 `--port`, stop은 해당 포트만 kill(→ `-stop`이 자기 앱만 정확히 종료, 8081 충돌 footgun 해소). §7 Expo "앱별 고정 포트" 반영.
+
 ## Codex 실행 체크리스트
 
 새 앱 온보딩 작업을 맡은 Codex는 다음 순서로 움직인다.
@@ -287,3 +320,15 @@ Notion notify wrapper 필수 입력:
 - Notion Releases row는 생겼지만 앱 페이지 relation이 비어 있음
 - PWA service worker가 오래된 rev를 계속 잡고 있음
 - Expo OTA로 해결할 수 없는 native 변경을 OTA로 배포하려고 함
+- Expo app repo에 sync용 `.vscode/tasks.json` + git 전용 `sync-claude.sh`가 빠짐 (GAS 패턴을 그대로 복사하려다 clasp 단계 때문에 막힘)
+- app의 Release Auto가 `bump-version`까지 트리거 → `source_repo` 때문에 소스 기준 패치노트 생성(app-only 변경 노트 불일치). app Release Auto는 `eas build`(배포)만, version 기록은 source에서.
+- Expo app repo에 `CLAUDE.md` 누락
+- `.claude-commit-msg`를 app repo `.gitignore`에 미등록
+- release 워크플로가 app repo 원격에 `version.json`을 bump → 로컬이 매번 뒤처져 sync push가 `non-fast-forward`로 거부됨 (sync 스크립트에 `git pull --rebase` 필요)
+- 첫 sync의 `git add -A`가 그동안 미커밋이던 secret/정크(`.env.save`·`__pycache__`·`.pyc`·`.claude/`)까지 통째로 커밋 → push 전에 `.gitignore` 보강 + 커밋에서 제거. (`.env`만 ignore돼 있고 `.env.save`는 빠지기 쉬움)
+- EAS 무료 플랜 **월 빌드 quota 소진**(변경마다 cloud `eas build`를 돌린 결과) → 빌드 실패. Expo 앱 Release Auto는 **`eas build --local`** 기본(quota 안 씀, JDK17+Android SDK 필요)으로 두고, 잦은 테스트는 dev빌드+reload/`npm run web`로. cloud는 `EAS_REMOTE=1` 또는 quota 리셋·업그레이드 시.
+- `eas build --local`은 프로젝트를 tar로 묶을 때 `.gitignore`(있으면 `.easignore`)를 따름 → **gitignore된 `google-services.json` 등 빌드 필수 파일이 아카이브에서 빠져 prebuild가 `ENOENT`로 실패**. `.easignore`를 만들어 그 파일만 포함(비밀 `.env`/`firebase-service-account*.json`은 계속 제외). (stockflow에서 발견)
+- 로컬 빌드는 release-auto의 **맨 마지막 단계**에 둔다 — 빌드(느리고 실패 잦음)가 version 기록(bump/Notion/Backlog)을 막지 않도록. 빌드 실패해도 기록은 보존.
+- Expo 앱 식별을 CLAUDE.md 구조표에 의존 → 숨은 Expo 앱 누락(예: bodyflow가 문서상 GAS지만 `bodyflow-app/apps/mobile`이 Expo). `package.json`의 expo 의존성 스캔으로 식별.
+- Expo 앱에 dev 실행 셸 단축어(`<flow>-start`/`-web`/`-stop`)가 없어 매번 긴 app 경로를 `cd` (→ `~/.npm-global/bin`에 스크립트 3종, §7 Expo)
+- 여러 Expo 앱을 고정 포트 없이 띄우면 둘째부터 자동으로 다른 포트(8082…)로 떠 `-stop`이 못 잡고 어느 게 어느 앱인지 헷갈림 → 앱별 고정 포트(§7 Expo: estate 8081·stock 8082·body 8083·신규 +1)
