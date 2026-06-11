@@ -42,7 +42,7 @@ on:
         description: "title 입력과 AI 요약이 모두 비었을 때 쓸 제목."
     secrets:
       RELEASE_PAT:
-        required: true
+        required: false
 
 permissions:
   contents: write
@@ -384,7 +384,7 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
           NEW_REV: ${{ steps.bump.outputs.new_rev }}
           TITLE: ${{ steps.title.outputs.value }}
           APP_NAME: ${{ inputs.app_name }}
