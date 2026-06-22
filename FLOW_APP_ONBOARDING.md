@@ -108,6 +108,35 @@ app repo의 Actions secrets를 등록한다.
 - `RELEASE_PAT`이 새 repo에 접근 가능한지 확인한다.
 - PAT이 selected repositories 방식이면 새 repo를 명시적으로 추가한다.
 - workflow가 `contents: write`, `models: read` 권한을 갖는지 확인한다.
+- 모든 값은 `gh secret list -R <owner>/<repo> --json name,updatedAt`로 **이름만** 확인한다. secret 원문을 로그에 찍지 않는다.
+
+### 자동 등록 절차
+
+CoFlow app 온보딩에서 아래 절차가 검증됐다. 새 app repo의 secret 세팅은 가능한 한 자동화한다.
+
+1. **값을 유도할 수 있는 secret은 바로 등록한다.**
+   - `NOTION_RELEASES_DB_ID`: Notion Releases DB 페이지/관계에서 확인한 DB id.
+   - `GAS_RELEASE_WEBHOOK_URL`: TaskFlow GAS deploy id로 `https://script.google.com/macros/s/<deploy-id>/exec` 구성. 보통 `taskflow-source/.clasp-deploy-id`에서 읽는다.
+
+2. **TaskFlow GAS Script Properties에 있는 값은 임시 HEAD route로 옮긴다.**
+   - 대상: `NOTION_TOKEN` -> GitHub secret `NOTION_TOKEN`, `RELEASE_WEBHOOK_SECRET` -> `GAS_RELEASE_SECRET`.
+   - 실제 repo를 직접 수정하지 말고 `/private/tmp/<taskflow-secret-bridge>` 같은 복사본에서만 임시 파일을 만든다.
+   - 임시 route는 긴 nonce로 보호하고, production deployment가 아닌 **HEAD web app deployment**에만 올린다.
+   - 호출할 때는 `Authorization: Bearer <clasp access_token>`를 붙인다.
+   - 응답값은 화면에 출력하지 말고 바로 `gh secret set` stdin/body로 넘긴다.
+   - 완료 즉시 실제 `taskflow-source`의 원래 tracked file set(`appsscript`, `Code`, `Index`, `notion_release_sync`, `notion-backlog-sync`)으로 Apps Script HEAD를 복원한다.
+   - 복원 후 Apps Script content API에서 `CodexSecretBridge` 같은 임시 파일명이 없는지 확인한다.
+
+3. **`RELEASE_PAT`는 기존 repo secret에서 복사할 수 없다.**
+   - GitHub Actions secret은 원문 조회가 불가능하다.
+   - 다른 Flow 앱과 같은 구성으로 맞추려면 현재 `gh` 인증 토큰을 사용할 수 있다: `gh auth token | gh secret set -R <owner>/<repo> RELEASE_PAT`.
+   - 실행 전 `gh auth status`에서 `repo`, `workflow` scope가 있는지 확인한다.
+   - 기존 모든 repo와 byte-for-byte 같은 PAT가 필요하면, 새 PAT를 발급해 모든 Flow repo의 `RELEASE_PAT`를 함께 회전한다.
+
+4. **`clasp` CLI가 `Premature close`로 실패하면 curl 기반 API로 우회한다.**
+   - `~/.clasprc.json`의 토큰이 깨졌거나 비어 있으면 Google OAuth callback을 로컬에서 받고, token endpoint는 `curl`로 교환해 복구할 수 있다.
+   - `clasp push/run/deployments`가 Node fetch 문제로 실패해도, 같은 access token으로 Apps Script REST API를 `curl` 호출하면 동작할 수 있다.
+   - 이 우회는 secret 값을 출력하지 않는 스크립트 안에서만 사용한다.
 
 ## 4. Shared Release Workflow
 
@@ -231,13 +260,13 @@ Notion notify wrapper 필수 입력:
 - native module 변경이면 OTA가 아니라 새 build 필요
 - **release 의미를 둘로 분리한다**:
   - **배포(앱을 사용자에게)** = app repo의 🎯 Release Auto = `scripts/release-auto.sh`(sync `git push` → **`eas build --local`**). 로컬 빌드는 EAS 클라우드 quota를 쓰지 않는다 — 대신 **JDK 17 + Android SDK**(iOS는 Xcode)가 필요. 도구체인 없으면 스크립트가 안내 후 중단하며, 클라우드 빌드는 `EAS_REMOTE=1 bash scripts/release-auto.sh`. OTA(`eas update`)는 `expo-updates` 설치 후 추가(Phase 2.5+).
-  - **로컬 빌드 스크립트 표준**(estate/stock/body 공통): ① 빌드를 release-auto의 **맨 마지막**(version 기록 후)에 둬 빌드 실패가 기록을 막지 않게 함 ② `brew openjdk@17`는 keg-only라 PATH에 없을 수 있어 `JAVA_HOME`을 스크립트에서 직접 주입(`/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`), `ANDROID_HOME` 미설정 시 `~/Library/Android/sdk` 폴백 ③ `--output ~/Desktop/<flow>-<profile>-<MMDD>.apk`로 APK 저장 ④ 빌드 후 `scripts/share-apk.sh`로 같은 와이파이 폰에 LAN(URL+QR) 전송(카톡 APK 차단 우회) ⑤ gitignore된 `google-services.json`은 로컬 빌드 아카이브에 안 들어오니 `GOOGLE_SERVICES_JSON`에 로컬 절대경로 주입(또는 Known Pitfalls의 `.easignore`). **monorepo**면 빌드만 `( cd apps/mobile && eas build --local )`.
+  - **로컬 빌드 스크립트 표준**(estate/stock/body/co 공통): ① 빌드를 release-auto의 **맨 마지막**(version 기록 후)에 둬 빌드 실패가 기록을 막지 않게 함 ② `brew openjdk@17`는 keg-only라 PATH에 없을 수 있어 `JAVA_HOME`을 스크립트에서 직접 주입(`/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`), `ANDROID_HOME` 미설정 시 `~/Library/Android/sdk` 폴백 ③ `--output ~/Desktop/<flow>-<profile>-<MMDD>.apk`로 APK 저장 ④ 빌드 후 `scripts/share-apk.sh`로 같은 와이파이 폰에 LAN(URL+QR) 전송(카톡 APK 차단 우회) ⑤ gitignore된 `google-services.json`은 로컬 빌드 아카이브에 안 들어오니 `GOOGLE_SERVICES_JSON`에 로컬 절대경로 주입(또는 Known Pitfalls의 `.easignore`). **monorepo**면 빌드만 `( cd apps/mobile && eas build --local )`.
   - **version 기록(version bump + GH Release + Notion + Backlog)** = source-driven. app repo의 `bump-version.yml`이 `source_repo`를 넘겨 AI 패치노트를 **소스 커밋 로그**에서 생성하므로, version 기록 release는 **source repo의 Release Auto**로 돌린다.
   - 따라서 **app의 release-auto.sh는 `bump-version`을 트리거하지 않는다**(트리거하면 소스 기준 노트가 나옴).
 - app repo에도 `CLAUDE.md`를 둔다(§8) — 구조·작업 흐름·빌드/release 방식 기록. Expo 앱은 누락되기 쉽다.
 - `.claude-commit-msg`를 app repo `.gitignore`에 등록(GAS의 `.claspignore`는 불필요).
 - **dev 실행 셸 단축어**: app 경로가 길어 매번 `cd`가 번거로우므로 `~/.npm-global/bin`에 실행 스크립트 3종을 둔다 — `<flow>-start`(`cd <app경로> && exec npx expo start --port <고정포트> "$@"`), `<flow>-web`(`--web --port <고정포트>`), `<flow>-stop`(해당 포트 Metro kill, 비상용·평소엔 Ctrl-C). 이 폴더는 `.zshrc`에서 이미 PATH라 어느 폴더에서든 작동하고 **셸 프로파일 수정 없이 파일만 추가**하면 된다(자동화가 `.zshrc` 수정을 차단하면 alias 대신 이 방식). 이름은 경로가 아니라 flow 이름 기준(`bodyflow-app/apps/mobile` → `bodyflow-*`). `chmod +x` 필수.
-  - **앱별 고정 포트** — 여러 앱을 동시에 띄워 번갈아 확인할 수 있고, `-stop`이 자기 앱만 정확히 종료한다. 고정하지 않으면 둘째 앱이 자동으로 다른 포트(8082…)로 떠서 `-stop`이 못 잡는다. 현재 배정: estateflow `8081`, stockflow `8082`, bodyflow `8083`. **새 앱은 마지막 포트+1**(다음은 `8084`). start/web에 `--port <포트>`, stop은 `lsof -ti:<포트>`로 kill.
+  - **앱별 고정 포트** — 여러 앱을 동시에 띄워 번갈아 확인할 수 있고, `-stop`이 자기 앱만 정확히 종료한다. 고정하지 않으면 둘째 앱이 자동으로 다른 포트(8082…)로 떠서 `-stop`이 못 잡는다. 현재 배정: estateflow `8081`, stockflow `8082`, bodyflow `8083`, coflow `8084`. **새 앱은 마지막 포트+1**(다음은 `8085`). start/web에 `--port <포트>`, stop은 `lsof -ti:<포트>`로 kill.
 
 ## 8. Local Workspace
 
@@ -285,12 +314,19 @@ Notion notify wrapper 필수 입력:
     - app Release Auto 결정 정정: 처음엔 "app엔 Release Auto 두지 않음"이었으나, 사용자가 app 배포 버튼을 원해 **`release-auto.sh` = sync + `eas build`(배포 전용)** 로 추가. version 기록(bump-version)은 그대로 source-driven 유지(app에서 트리거 안 함).
     - EAS 무료 quota 소진으로 빌드 실패 → Expo 앱 빌드를 **`eas build --local`** 기본으로 전환(quota 안 씀, JDK17+Android SDK 필요, `EAS_REMOTE=1`이면 cloud). 적용: estateflow-app(release-auto = sync+로컬빌드, 📦/🍎 task). stockflow-app(app-first, full 파이프라인)은 **기존 sync+bump+Notion+Backlog 유지하고 `eas build --local`을 맨 마지막 단계(④, version 기록 후)로 추가** — 사용자 요청대로 빌드를 끝에 둬서 **빌드가 실패해도 version 기록은 이미 완료/보존**되게 함. 원칙: 로컬 빌드는 항상 **추가**, 기존 release-auto 기능은 제거 금지. 추가로 gitignore된 `google-services.json`이 `eas build --local` 아카이브에서 빠져 prebuild가 실패 → **`.easignore`** 로 포함시킴(비밀 `.env`/`firebase-service-account*.json`은 계속 제외). bodyflow-app(monorepo)도 동일하게 release-auto(루트) 끝에 빌드 추가하되 Expo 앱이 `apps/mobile`이라 **`( cd apps/mobile && eas build --local )`**. → 3개 Expo 앱(estate/stock/body) 모두 build-last 일관 적용.
 
+- **2026-06-22 · CoFlow App (GitHub repo + release secret onboarding)**
+  - 발견: 새 `coflow-app` repo를 만들고 workflow wrapper를 올려도 app repo secrets가 비어 있으면 release/Notion/GAS 후처리가 실패한다. 기존 `coflow`/`taskflow` repo에는 secret 이름이 있어도 GitHub는 원문 값을 다시 읽을 수 없다.
+  - 추가한 단계: §3 `GitHub Secrets And PAT`에 자동 등록 절차를 추가. Notion Releases DB id와 TaskFlow GAS webhook URL은 구조에서 유도해 등록하고, TaskFlow GAS Script Properties의 `NOTION_TOKEN`/`RELEASE_WEBHOOK_SECRET`은 임시 nonce-protected HEAD route로 읽어 바로 `gh secret set`에 넘긴 뒤 즉시 제거하는 방식. `RELEASE_PAT`는 `gh auth token`을 사용하되 `repo`/`workflow` scope 확인을 필수로 기록.
+  - 부수 발견: `clasp` CLI가 Google API 호출에서 `Premature close`를 내도 curl 기반 Apps Script REST API는 정상 동작할 수 있음. `~/.clasprc.json`이 비었을 때는 로컬 OAuth callback + curl token exchange로 복구 가능.
+  - 재발 방지: secret 값은 로그/문서에 남기지 않고, 검증은 `gh secret list`의 이름 목록과 Apps Script HEAD content의 임시 helper 부재만으로 한다. production deployment는 건드리지 않는다.
+
 - **2026-06-10 · StockFlow / BodyFlow (Expo dev 셸 단축어)**
   - 발견: Expo dev 서버 실행에 매번 긴 `~/Projects/.../app` 경로를 `cd` 해야 해 번거로움. 사용자가 `~/Projects`의 **모든 Expo 앱**에 동일 단축어를 요청.
   - 추가한 단계: §7 Expo "dev 실행 셸 단축어" — `~/.npm-global/bin`에 `<flow>-start`/`-web`/`-stop` 3종(stockflow·estateflow·bodyflow 적용 완료). `.zshrc` alias가 자동화 환경에서 차단돼, PATH 폴더에 실행 스크립트를 두는 방식으로 회피.
   - 부수 발견: 어느 앱이 Expo인지 CLAUDE.md 구조표로 판단하면 누락된다 — **bodyflow는 문서상 GAS PWA지만 실제 `bodyflow-app/apps/mobile`에 Expo 앱이 별도 존재**. 식별은 `find ~/Projects -name node_modules -prune -o -name package.json -exec grep -l '"expo"' {} \;`.
   - 재발 방지: Known Pitfalls에 "Expo 앱 식별은 expo 의존성 스캔", "Expo 앱 dev 단축어 누락" 반영.
   - 후속(같은 날): 여러 앱 동시 실행·번갈아 확인 위해 **앱별 고정 포트** 지정 — estateflow 8081 / stockflow 8082 / bodyflow 8083, 새 앱 +1. start/web에 `--port`, stop은 해당 포트만 kill(→ `-stop`이 자기 앱만 정확히 종료, 8081 충돌 footgun 해소). §7 Expo "앱별 고정 포트" 반영.
+  - 2026-06-18 후속: CoFlow Expo 앱 단축어 추가 — coflow 8084 배정. 다음 신규 Expo 앱은 8085부터 사용.
 
 ## Codex 실행 체크리스트
 
@@ -314,7 +350,10 @@ Notion notify wrapper 필수 입력:
 - `APP_PAGE_ID`를 workflow에는 넣었지만 TaskFlow mapping에는 안 넣음
 - TaskFlow 보조 sync 파일만 고치고 실제 UI create path를 놓침
 - GitHub PAT selected repository 목록에 새 repo를 추가하지 않음
+- 기존 GitHub secret 원문을 복사하려고 함 — secret 값은 조회 불가. 새 repo에는 `gh auth token` 또는 새로 발급한 PAT를 등록하고, byte-for-byte 동일성이 필요하면 모든 repo secret을 함께 회전한다.
 - GitHub secret은 등록했지만 workflow permissions가 부족함
+- GAS Script Properties의 `NOTION_TOKEN`/`RELEASE_WEBHOOK_SECRET`를 옮긴 뒤 임시 Apps Script helper를 HEAD에 남김 — 반드시 원래 file set으로 HEAD를 복원하고 content API에서 임시 파일 부재를 확인한다.
+- `clasp` CLI의 Node fetch가 `Premature close`를 내는데 인증 자체가 깨졌다고 단정함 — curl 기반 token exchange/API 호출로 복구·우회 가능성을 먼저 확인한다.
 - `clasp push`는 됐지만 production deployment가 옛 버전을 계속 서빙함
 - 새 branch에서 upstream이 없어 release script가 `git push`에서 실패함
 - Notion Releases row는 생겼지만 앱 페이지 relation이 비어 있음
