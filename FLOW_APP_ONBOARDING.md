@@ -40,8 +40,8 @@
 | 내부 category key | 예: StockFlow |
 | app repo | 예: `klausjg/stockflow` |
 | source repo | 예: `klausjg/stockflow-source` |
-| 로컬 app 경로 | 예: `/Users/bourne/Projects/stockflow/stockflow-app` |
-| 로컬 source 경로 | 예: `/Users/bourne/Projects/stockflow/stockflow-source` |
+| 로컬 app 경로 | 예: `/Users/bourne/Projects/stockflow-app` (`~/Projects` 바로 아래) |
+| 로컬 source 경로 | 예: `/Users/bourne/Projects/stockflow-source` (`~/Projects` 바로 아래) |
 | Notion Apps page id |  |
 | Notion Releases DB id | 보통 기존 공통 DB |
 | TaskFlow 카테고리명 | 보통 앱 표시명과 동일 |
@@ -270,8 +270,7 @@ Notion notify wrapper 필수 입력:
 
 ## 8. Local Workspace
 
-- `/Users/bourne/Projects` 아래 위치를 정한다.
-- app repo와 source repo가 같은 부모 아래 있으면 운영이 쉽다.
+- **`-app`과 `-source` 폴더는 둘 다 `/Users/bourne/Projects` 바로 아래에 둔다** (`~/Projects/<flow>-app`, `~/Projects/<flow>-source`). 부모 폴더로 묶지 않는다 — 셸 단축어·자동화 스크립트가 이 표준 경로를 전제한다. (2026-07-02, stockflow-app이 `stockflow/stockflow-app` 중첩으로 잘못 배치됐던 것을 표준 위치로 이동하며 확정)
 - 필요하면 `_flow_repos` 또는 workspace 파일에 추가한다.
 - README와 `CLAUDE.md`에 로컬 경로, repo, release 방법을 적는다.
 
@@ -303,6 +302,11 @@ Notion notify wrapper 필수 입력:
 - 재발 방지 체크 항목
 
 ### 업데이트 로그
+
+- **2026-07-02 · StockFlow (로컬 폴더 표준 위치)**
+  - 발견: stockflow-app이 `~/Projects/stockflow/stockflow-app`으로 부모 폴더에 중첩돼 있었음. 표준은 **`-app`/`-source` 모두 `~/Projects` 바로 아래** (taskflow-app, coflow-app 등과 동일).
+  - 조치: `~/Projects/stockflow-app`으로 이동, `~/.npm-global/bin`의 stockflow-{start,web,stop,build,ota,update} 경로 수정, 부모 폴더의 `.claude/launch.json` 설정(design-preview)을 앱 쪽으로 병합.
+  - 재발 방지: §8과 새 앱 변수표의 경로 예시를 표준 위치로 정정. 새 앱 온보딩 시 부모 폴더를 만들지 말 것.
 
 - **2026-06-09 · EstateFlow (Expo app)**
   - 발견: 이미 온보딩된 앱인데도 `estateflow-app`(Expo)에 §5 VSCode task와 §8 `CLAUDE.md`가 없었음. release는 source-driven인데 app에 Release Auto를 두려다, `bump-version.yml`의 `source_repo: klausjg/estateflow-source` 때문에 소스 기준 패치노트가 생성되는 구조를 확인.
