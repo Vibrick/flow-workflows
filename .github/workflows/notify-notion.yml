@@ -14,9 +14,9 @@ on:
         required: true
       NOTION_RELEASES_DB_ID:
         required: true
-      GAS_RELEASE_WEBHOOK_URL:
+      TASKFLOW_RELEASE_WEBHOOK_URL:
         required: false
-      GAS_RELEASE_SECRET:
+      TASKFLOW_RELEASE_WEBHOOK_SECRET:
         required: false
 
 jobs:
@@ -141,27 +141,25 @@ jobs:
           echo "page_id=$NEW_PAGE_ID" >> "$GITHUB_OUTPUT"
 
       # ─────────────────────────────────────────────
-      # NEW: GAS 웹앱 호출로 Backlog 일괄 처리
-      #      (GAS_RELEASE_WEBHOOK_URL secret이 등록돼있을 때만 실행)
+      # Firebase releaseWebhook 호출로 Backlog 일괄 처리
+      # (TASKFLOW_RELEASE_WEBHOOK_URL secret이 등록돼있을 때만 실행)
       # ─────────────────────────────────────────────
-      - name: Trigger GAS for Backlog auto-completion
+      - name: Trigger TaskFlow release webhook for Backlog auto-completion
         env:
-          WEBHOOK_URL: ${{ secrets.GAS_RELEASE_WEBHOOK_URL }}
-          SHARED_SECRET: ${{ secrets.GAS_RELEASE_SECRET }}
+          WEBHOOK_URL: ${{ secrets.TASKFLOW_RELEASE_WEBHOOK_URL }}
+          SHARED_SECRET: ${{ secrets.TASKFLOW_RELEASE_WEBHOOK_SECRET }}
           REV_PAGE_ID: ${{ steps.notion_create.outputs.page_id }}
           APP_NAME: ${{ inputs.app_name }}
           PREV_AT: ${{ steps.prev_release.outputs.prev_at }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then
-            echo "GAS_RELEASE_WEBHOOK_URL secret 미등록 → GAS 호출 skip"
+            echo "TASKFLOW_RELEASE_WEBHOOK_URL secret 미등록 → TaskFlow release webhook skip"
             exit 0
           fi
-          echo "GAS 호출:"
+          echo "TaskFlow release webhook 호출:"
           echo "  appName: $APP_NAME"
           echo "  revisionPageId: $REV_PAGE_ID"
           echo "  lastReleaseAt: ${PREV_AT:-(없음)}"
-          # GAS Web App은 외부 POST가 redirect 처리에서 막히는 알려진 한계가 있어요.
-          # GET + query string 방식으로 호출하면 redirect target도 정상 처리.
           # curl -G --data-urlencode 가 자동으로 query string 만들어줌.
           HTTP_RESPONSE=$(curl -sL -w "\n%{http_code}" -G "$WEBHOOK_URL" \
             --data-urlencode "sharedSecret=$SHARED_SECRET" \
@@ -170,12 +168,11 @@ jobs:
             --data-urlencode "lastReleaseAt=$PREV_AT")
           HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
           BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
-          echo "GAS 응답 (HTTP $HTTP_CODE):"
+          echo "Webhook response (HTTP $HTTP_CODE):"
           echo "$BODY" | jq . || echo "$BODY"
-          # GAS는 항상 200을 반환하므로 본문의 ok 플래그로 성공 판단
           OK=$(echo "$BODY" | jq -r '.ok // false')
           if [ "$OK" != "true" ]; then
-            echo "❌ GAS 처리 실패"
+            echo "❌ TaskFlow release webhook 처리 실패"
             exit 1
           fi
-          echo "✅ GAS Backlog 일괄 처리 완료"
+          echo "✅ TaskFlow Backlog 일괄 처리 완료"

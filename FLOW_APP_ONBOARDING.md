@@ -100,8 +100,8 @@ app repo의 Actions secrets를 등록한다.
 | `RELEASE_PAT` | release workflow가 commit/tag/push할 때 사용 |
 | `NOTION_TOKEN` | Notion Releases 기록 |
 | `NOTION_RELEASES_DB_ID` | 공통 Releases DB |
-| `GAS_RELEASE_WEBHOOK_URL` | TaskFlow/Backlog 후처리 webhook |
-| `GAS_RELEASE_SECRET` | webhook 인증 |
+| `TASKFLOW_RELEASE_WEBHOOK_URL` | TaskFlow/Backlog 후처리 Firebase webhook |
+| `TASKFLOW_RELEASE_WEBHOOK_SECRET` | webhook 인증 |
 
 체크:
 
@@ -116,13 +116,11 @@ CoFlow app 온보딩에서 아래 절차가 검증됐다. 새 app repo의 secret
 
 1. **값을 유도할 수 있는 secret은 바로 등록한다.**
    - `NOTION_RELEASES_DB_ID`: Notion Releases DB 페이지/관계에서 확인한 DB id.
-   - `GAS_RELEASE_WEBHOOK_URL`: TaskFlow GAS deploy id로 `https://script.google.com/macros/s/<deploy-id>/exec` 구성. 보통 `taskflow-source/.clasp-deploy-id`에서 읽는다.
+   - `TASKFLOW_RELEASE_WEBHOOK_URL`: TaskFlow Firebase Function `releaseWebhook` URL.
 
-2. **TaskFlow GAS Script Properties에 있는 값은 임시 HEAD route로 옮긴다.**
-   - 대상: `NOTION_TOKEN` -> GitHub secret `NOTION_TOKEN`, `RELEASE_WEBHOOK_SECRET` -> `GAS_RELEASE_SECRET`.
-   - 실제 repo를 직접 수정하지 말고 `/private/tmp/<taskflow-secret-bridge>` 같은 복사본에서만 임시 파일을 만든다.
-   - 임시 route는 긴 nonce로 보호하고, production deployment가 아닌 **HEAD web app deployment**에만 올린다.
-   - 호출할 때는 `Authorization: Bearer <clasp access_token>`를 붙인다.
+2. **TaskFlow Firebase Secret Manager의 값은 같은 이름 계열로 옮긴다.**
+   - 대상: `TASKFLOW_NOTION_TOKEN` -> GitHub secret `NOTION_TOKEN`, `TASKFLOW_RELEASE_WEBHOOK_SECRET` -> GitHub secret `TASKFLOW_RELEASE_WEBHOOK_SECRET`.
+   - secret 원문은 로그에 찍지 않고 `gh secret set --body`로 바로 등록한다.
    - 응답값은 화면에 출력하지 말고 바로 `gh secret set` stdin/body로 넘긴다.
    - 완료 즉시 실제 `taskflow-source`의 원래 tracked file set(`appsscript`, `Code`, `Index`, `notion_release_sync`, `notion-backlog-sync`)으로 Apps Script HEAD를 복원한다.
    - 복원 후 Apps Script content API에서 `CodexSecretBridge` 같은 임시 파일명이 없는지 확인한다.

@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   bump:
-    uses: klausjg/flow-workflows/.github/workflows/bump-version.yml@main
+    uses: Vibrick/flow-workflows/.github/workflows/bump-version.yml@main
     with:
       rev: ${{ inputs.rev }}
       title: ${{ inputs.title }}
@@ -32,7 +32,7 @@ jobs:
       app_name: "MyFlow"
       app_description: "사용자에게 보이는 앱 설명"
       fallback_title: "MyFlow 업데이트"
-      source_repo: klausjg/myflow-source # app-only flow면 생략
+      source_repo: vibrick/myflow-source # app-only flow면 생략
     secrets:
       RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
 ```
@@ -42,15 +42,15 @@ Notion/Backlog 기록은 release 발행 이벤트를 받아 별도 래퍼로 호
 ```yaml
 jobs:
   notify:
-    uses: klausjg/flow-workflows/.github/workflows/notify-notion.yml@main
+    uses: Vibrick/flow-workflows/.github/workflows/notify-notion.yml@main
     with:
       app_name: "MyFlow"
       app_page_id: "notion-page-id"
     secrets:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_RELEASES_DB_ID: ${{ secrets.NOTION_RELEASES_DB_ID }}
-      GAS_RELEASE_WEBHOOK_URL: ${{ secrets.GAS_RELEASE_WEBHOOK_URL }}
-      GAS_RELEASE_SECRET: ${{ secrets.GAS_RELEASE_SECRET }}
+      TASKFLOW_RELEASE_WEBHOOK_URL: ${{ secrets.TASKFLOW_RELEASE_WEBHOOK_URL }}
+      TASKFLOW_RELEASE_WEBHOOK_SECRET: ${{ secrets.TASKFLOW_RELEASE_WEBHOOK_SECRET }}
 ```
 
 ## 사용 중인 앱 레포
