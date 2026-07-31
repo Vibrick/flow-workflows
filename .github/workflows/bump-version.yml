@@ -43,10 +43,11 @@ on:
     secrets:
       RELEASE_PAT:
         required: false
+      ANTHROPIC_API_KEY:
+        required: false
 
 permissions:
   contents: write
-  models: read
 
 jobs:
   bump:
@@ -182,13 +183,13 @@ jobs:
           cat /tmp/ai_input.txt
           echo "──────────────────────────"
 
-      - name: Generate release notes via GitHub Models
+      - name: Generate release notes via Claude
         if: inputs.notes == ''
         id: ai_notes
-        uses: actions/ai-inference@v1
-        with:
-          model: openai/gpt-4o
-          system-prompt: |
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: claude-sonnet-5
+          SYSTEM_PROMPT: |
             너는 일반 사용자(개발자 아님)에게 "이번 업데이트에서 뭐가 달라졌는지" 알려주는
             한국어 릴리즈 노트 작성기다.
 
@@ -252,21 +253,132 @@ jobs:
 
             변경 내용이 없는 섹션은 "- " 한 줄만 비워두기.
             절대 인사말, 설명, 코드 펜스(```)를 추가하지 마라.
-          prompt-file: /tmp/ai_input.txt
-
-      - name: Save AI output to RELEASE_NOTES.md
-        if: inputs.notes == '' && steps.ai_notes.outputs.response != ''
-        env:
-          AI_OUTPUT: ${{ steps.ai_notes.outputs.response }}
         shell: bash
         run: |
-          # 코드 펜스가 들어있으면 제거
-          printf '%s' "$AI_OUTPUT" \
-            | sed -e '/^```[a-zA-Z]*$/d' -e '/^```$/d' \
-            > RELEASE_NOTES.md
-          echo "──── AI 작성 RELEASE_NOTES.md ────"
-          cat RELEASE_NOTES.md
-          echo "──────────────────────────────────"
+          : > /tmp/claude_release_notes.md
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+          if not api_key:
+              print("ANTHROPIC_API_KEY가 없어 기본 릴리즈 노트를 사용합니다.")
+              raise SystemExit(0)
+
+          with open("/tmp/ai_input.txt", encoding="utf-8") as source:
+              user_prompt = source.read()
+
+          payload = json.dumps({
+              "model": os.environ["CLAUDE_MODEL"],
+              "max_tokens": 1000,
+              "thinking": {"type": "disabled"},
+              "system": os.environ["SYSTEM_PROMPT"],
+              "messages": [{"role": "user", "content": user_prompt}],
+          }).encode("utf-8")
+
+          retryable_statuses = {408, 409, 429, 500, 502, 503, 504}
+          for attempt in range(1, 4):
+              request = urllib.request.Request(
+                  "https://api.anthropic.com/v1/messages",
+                  data=payload,
+                  headers={
+                      "content-type": "application/json",
+                      "x-api-key": api_key,
+                      "anthropic-version": "2023-06-01",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=90) as response:
+                      result = json.load(response)
+                  text = "".join(
+                      block.get("text", "")
+                      for block in result.get("content", [])
+                      if block.get("type") == "text"
+                  ).strip()
+                  if not text:
+                      raise ValueError("Claude 응답에 본문이 없습니다.")
+                  cleaned = "\n".join(
+                      line for line in text.splitlines()
+                      if not line.strip().startswith("```")
+                  ).strip()
+                  with open("/tmp/claude_release_notes.md", "w", encoding="utf-8") as target:
+                      target.write(cleaned + "\n")
+                  print(f"Claude 릴리즈 노트 생성 완료 ({os.environ['CLAUDE_MODEL']})")
+                  break
+              except urllib.error.HTTPError as error:
+                  print(f"Claude API 요청 실패: HTTP {error.code} (시도 {attempt}/3)")
+                  if error.code not in retryable_statuses:
+                      break
+              except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+                  print(f"Claude API 응답 처리 실패: {type(error).__name__} (시도 {attempt}/3)")
+              if attempt < 3:
+                  time.sleep(2 ** attempt)
+          PY
+
+          if [ -s /tmp/claude_release_notes.md ]; then
+            cp /tmp/claude_release_notes.md RELEASE_NOTES.md
+            echo "──── Claude 작성 RELEASE_NOTES.md ────"
+            cat RELEASE_NOTES.md
+            echo "──────────────────────────────────────"
+          fi
+
+      - name: Create fallback release notes
+        if: inputs.notes == ''
+        env:
+          APP_NAME: ${{ inputs.app_name || 'Flow 앱' }}
+        shell: bash
+        run: |
+          if [ -s /tmp/claude_release_notes.md ]; then
+            exit 0
+          fi
+
+          python3 <<'PY'
+          import os
+          import re
+
+          app_name = os.environ["APP_NAME"]
+          source = open("/tmp/ai_input.txt", encoding="utf-8").read().lower()
+          has_fix = bool(re.search(r"\b(fix|bug|error)\b|수정|오류|문제", source))
+          has_feature = bool(re.search(r"\b(feat|add|support)\b|추가|지원|새 기능", source))
+          has_improvement = bool(re.search(r"\b(improve|update|change)\b|개선|변경|편의", source))
+
+          if has_feature:
+              summary = f"이번 업데이트에서 {app_name}의 새로운 기능을 더 편하게 사용할 수 있어요"
+          elif has_fix:
+              summary = f"이번 업데이트에서 {app_name}을 더 안정적으로 사용할 수 있어요"
+          elif has_improvement:
+              summary = f"이번 업데이트에서 {app_name}의 사용 경험을 더 편하게 다듬었어요"
+          else:
+              summary = f"이번 업데이트에서 {app_name}의 내부 안정성을 다듬었어요"
+
+          added = "- 새로운 사용 편의 기능을 추가했어요" if has_feature else "- "
+          improved = "- 화면과 동작을 더 편하게 다듬었어요" if has_improvement else "- "
+          fixed = "- 사용 중 발생할 수 있던 문제를 수정했어요" if has_fix else "- "
+          other = "- " if any((has_feature, has_fix, has_improvement)) else "- 내부 정리 작업이 진행되었어요"
+
+          notes = f"""## 🎉 이번 릴리즈 요약
+          - {summary}
+
+          ## ✨ 추가된 기능
+          {added}
+
+          ## 🔧 변경/개선
+          {improved}
+
+          ## 🐛 수정된 문제
+          {fixed}
+
+          ## 📝 기타
+          {other}
+          """
+          with open("RELEASE_NOTES.md", "w", encoding="utf-8") as target:
+              target.write(notes)
+          print("Claude API를 사용할 수 없어 기본 릴리즈 노트를 생성했습니다.")
+          PY
 
       # ─────────────────────────────────────────────
       # 기존 단계 (변경 없음)
