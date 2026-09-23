@@ -301,6 +301,11 @@ Notion notify wrapper 필수 입력:
 
 ### 업데이트 로그
 
+- **2026-09-23 · RhythmFlow (GitHub 없이 TestFlight까지 간 앱 사후 온보딩)**
+  - 발견: `~/Projects/rhythmflow`(app-only Expo, 소스 repo 없음)가 로컬 git만 있고 GitHub remote가 없는 채로 EAS 로컬 빌드로 TestFlight까지 배포됨 — 코드가 Mac 한 대에만 존재. Sidebar/세션 정리 중 "vibrick 연결 없음"으로 드러남. 폴더명에 `-app`이 없고 포트는 8086(8085는 assetflow).
+  - 조치: `Vibrick/rhythmflow` private 생성·push, homeflow-app 기준으로 version.json(rev 0)·bump-version/notify-notion 래퍼·release-auto.sh·tasks.json·CLAUDE.md·.gitignore 보강, 기존 sync-claude.sh에 인자 메시지·TaskFlow 종료 요청 추가. Notion Apps 페이지 `3e4b783a-96a1-811d-acae-e3339d885b08` 생성. TaskFlow는 categories.js·functions `DEFAULT_APP_PAGE_IDS`·`complete-taskflow-on-sync.yml` 선택지 3곳에 추가.
+  - 재발 방지: `ANTHROPIC_API_KEY`(AI 패치노트, 없으면 기본 노트)는 §3 표에 없던 secret — 원본 출처가 로컬에 없으니 발급처에서 사용자가 등록. 기본 카테고리에 추가해도 기존 TaskFlow 사용자 목록엔 자동 반영되지 않으므로(normalizeStoredCategories가 저장값 유지) 앱에서 카테고리를 직접 추가해야 함. `complete-taskflow-on-sync.yml` 선택지에 새 앱이 없으면 새 앱 Sync가 push 후 `gh workflow run`에서 실패.
+
 - **2026-07-02 · StockFlow (로컬 폴더 표준 위치)**
   - 발견: stockflow-app이 `~/Projects/stockflow/stockflow-app`으로 부모 폴더에 중첩돼 있었음. 표준은 **`-app`/`-source` 모두 `~/Projects` 바로 아래** (taskflow-app, coflow-app 등과 동일).
   - 조치: `~/Projects/stockflow-app`으로 이동, `~/.npm-global/bin`의 stockflow-{start,web,stop,build,ota,update} 경로 수정, 부모 폴더의 `.claude/launch.json` 설정(design-preview)을 앱 쪽으로 병합.
